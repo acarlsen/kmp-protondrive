@@ -132,7 +132,12 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
         signature: ByteArray,
         verificationKeys: List<PublicKeyHandle>,
     ): VerifyResult {
+        // forceNonOpenPgpData: `data` is raw signed bytes, but PGPainless sniffs its
+        // leading bytes and, if they happen to resemble an OpenPGP packet header
+        // (~6% of random 32-byte session keys do), tries to parse them as a message
+        // and throws MalformedOpenPgpMessageException instead of verifying.
         val options = ConsumerOptions.get()
+            .forceNonOpenPgpData()
             .addVerificationOfDetachedSignatures(ByteArrayInputStream(signature))
         verificationKeys.forEach { options.addVerificationCert(it.freshPublicKeys()) }
 
@@ -411,7 +416,10 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
         armoredSignature: String,
         verificationKeys: List<PublicKeyHandle>,
     ): VerifyResult {
+        // forceNonOpenPgpData: same misclassification hazard as verifyDetached - session
+        // keys and manifests are arbitrary binary that can look like a packet header.
         val options = ConsumerOptions.get()
+            .forceNonOpenPgpData()
             .addVerificationOfDetachedSignatures(armoredSignature.byteInputStream(Charsets.UTF_8))
         verificationKeys.forEach { options.addVerificationCert(it.freshPublicKeys()) }
 

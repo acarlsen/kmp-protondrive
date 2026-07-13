@@ -1,5 +1,8 @@
 # [kmp-protondrive](https://github.com/acarlsen/kmp-protondrive)
+![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/acarlsen/kmp-mega/build.yml)
+[![Maven Central](https://img.shields.io/maven-central/v/dev.carlsen.protondrive/protondrive)](https://central.sonatype.com/namespace/dev.carlsen.protondrive)
 [![Kotlin version](https://img.shields.io/badge/Kotlin-2.4.0-blueviolet?logo=kotlin&logoColor=white)](http://kotlinlang.org)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![badge][badge-jvm]
 ![badge][badge-android]
 
@@ -25,6 +28,7 @@ What's missing:
 * Moving/copying folders (`moveNode`/`copyNode` are files-only)
 * Sharing, non-root volumes, photos, restoring from trash, permanent delete
 * FIDO2/security-key 2FA
+* iOS support (requires native OpenPGP library, not yet implemented, PRs welcome!)
 
 ## Platform Support
 - Android

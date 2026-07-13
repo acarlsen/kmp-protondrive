@@ -302,6 +302,30 @@ class PGPainlessOpenPGPCryptoTest {
     }
 
     @Test
+    fun `detached verification works even when the signed bytes resemble an OpenPGP packet`() {
+        // Session keys are random bytes, and ~6% of the time their leading bytes look like
+        // a binary OpenPGP packet header. PGPainless sniffs its input stream, and without
+        // ConsumerOptions.forceNonOpenPgpData() it would try to *parse* such data as a
+        // message and throw MalformedOpenPgpMessageException instead of verifying - the
+        // cause of a flaky failure in the pipeline test below. These fixed bytes sniff as
+        // a User Attribute packet header (0xD1 = new-format packet, tag 17).
+        val packetLikeSessionKeyBytes = ByteArray(32).also { bytes ->
+            val hex = "d142e0b996033d825222318297960adb864381c6bc0665c59d414760487779a8"
+            for (i in bytes.indices) bytes[i] = hex.substring(i * 2, i * 2 + 2).toInt(16).toByte()
+        }
+        val nodeKey = crypto.generateKey(crypto.generatePassphrase())
+        val nodePublicKey = nodeKey.privateKey.toPublicKeyHandle()
+
+        val armoredSignature = crypto.signArmoredDetached(packetLikeSessionKeyBytes, nodeKey.privateKey)
+        val armoredResult = crypto.verifyArmoredDetached(packetLikeSessionKeyBytes, armoredSignature, listOf(nodePublicKey))
+        assertEquals(VerifyStatus.OK, armoredResult.verified)
+
+        val binarySignature = crypto.signDetached(packetLikeSessionKeyBytes, nodeKey.privateKey)
+        val binaryResult = crypto.verifyDetached(packetLikeSessionKeyBytes, binarySignature, listOf(nodePublicKey))
+        assertEquals(VerifyStatus.OK, binaryResult.verified)
+    }
+
+    @Test
     fun `full upload-then-download crypto pipeline round-trips a file's content`() {
         // Mirrors exactly what DriveClient.uploadFile and downloadFile do together:
         // generate a content session key, wrap it in a ContentKeyPacket for the node's own

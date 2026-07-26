@@ -8,7 +8,7 @@ plugins {
 }
 
 group = "dev.carlsen.protondrive"
-version = "1.0.0-beta01"
+version = "1.0.0-beta03"
 
 kotlin {
     jvmToolchain(17)

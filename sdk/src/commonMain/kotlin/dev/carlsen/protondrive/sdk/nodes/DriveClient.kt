@@ -5,6 +5,7 @@ package dev.carlsen.protondrive.sdk.nodes
 import dev.carlsen.protondrive.sdk.ProtonDriveTelemetry
 import dev.carlsen.protondrive.sdk.account.ResolvedAddress
 import dev.carlsen.protondrive.sdk.apiService.DriveAPIService
+import dev.carlsen.protondrive.sdk.apiService.ErrorCode
 import dev.carlsen.protondrive.sdk.apiService.isCodeOk
 import dev.carlsen.protondrive.sdk.crypto.DigestAlgorithm
 import dev.carlsen.protondrive.sdk.crypto.EncryptedDetachedResult
@@ -18,6 +19,7 @@ import dev.carlsen.protondrive.sdk.crypto.hmacSha256
 import dev.carlsen.protondrive.sdk.crypto.sha256
 import dev.carlsen.protondrive.sdk.crypto.toPublicKeyHandle
 import dev.carlsen.protondrive.sdk.errors.IntegrityError
+import dev.carlsen.protondrive.sdk.errors.NodeWithSameNameExistsValidationError
 import dev.carlsen.protondrive.sdk.errors.ProtonDriveError
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
@@ -249,6 +251,10 @@ class DriveClient(
                                 name = "<undecryptable: ${link.linkId.take(12)}…>",
                                 type = link.type,
                                 modifiedTime = link.modifyTime,
+                                // Unencrypted server-side field - available even though the
+                                // rest of the link can't be decrypted. Lets createFolder spot a
+                                // name-hash collision against this exact orphaned sibling.
+                                hash = link.nameHash,
                                 parentLinkId = parent.linkId,
                             )
                         }
@@ -299,10 +305,28 @@ class DriveClient(
             name = armoredName,
             hash = hash,
         )
-        val response = apiService.post<CreateFolderRequest, CreateFolderResponse>(
-            "drive/v2/volumes/${parent.volumeId}/folders",
-            request,
-        )
+        val response = try {
+            apiService.post<CreateFolderRequest, CreateFolderResponse>(
+                "drive/v2/volumes/${parent.volumeId}/folders",
+                request,
+            )
+        } catch (error: Exception) {
+            // A hash collision against a sibling this SDK can't decrypt (see the "orphaned
+            // debris" comment in listChildren) surfaces here as a confusing crypto-verification
+            // error instead of the well-known ALREADY_EXISTS, because the server only ever
+            // computes the collision against the *existing* link's already-corrupted key
+            // material. Re-list and check by hash (which listChildren populates even for
+            // undecryptable placeholders) so callers get the same actionable error either way.
+            val collision = listChildren(parent).firstOrNull { it.hash == hash }
+            if (collision != null) {
+                throw NodeWithSameNameExistsValidationError(
+                    "A node named \"$name\" already exists in this folder",
+                    ErrorCode.ALREADY_EXISTS,
+                    existingNodeUid = collision.linkId,
+                )
+            }
+            throw error
+        }
 
         return Node(
             volumeId = parent.volumeId,

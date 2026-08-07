@@ -43,6 +43,9 @@ private const val BLOCKS_PAGE_SIZE = 20
 /** Matches client/js/src/internal/upload/streamUploader.ts's FILE_CHUNK_SIZE. */
 private const val FILE_CHUNK_SIZE = 4 * 1024 * 1024
 
+/** Max LinkIDs the `/links` endpoint accepts per request before it rejects with INVALID_REQUIREMENTS. */
+private const val LOAD_LINKS_PAGE_SIZE = 150
+
 /**
  * A pre-generated thumbnail to upload alongside a file's content in [DriveClient.uploadFile].
  * This SDK does no image processing itself - matching the JS SDK's own `Thumbnail` type, the
@@ -956,11 +959,14 @@ class DriveClient(
         return sessionKey
     }
 
+    /** The `/links` endpoint rejects requests with more than [LOAD_LINKS_PAGE_SIZE] LinkIDs (INVALID_REQUIREMENTS), so folders with more children than that must be loaded in batches. */
     private suspend fun loadLinks(volumeId: String, linkIds: List<String>): List<LinkDetails> =
-        apiService.post<LoadLinksRequest, LoadLinksResponse>(
-            "drive/v2/volumes/$volumeId/links",
-            LoadLinksRequest(linkIds),
-        ).links
+        linkIds.chunked(LOAD_LINKS_PAGE_SIZE).flatMap { batch ->
+            apiService.post<LoadLinksRequest, LoadLinksResponse>(
+                "drive/v2/volumes/$volumeId/links",
+                LoadLinksRequest(batch),
+            ).links
+        }
 
     private suspend fun decryptLinkDetails(volumeId: String, details: LinkDetails, parentKey: PrivateKeyHandle): Node {
         val link = details.link

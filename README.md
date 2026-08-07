@@ -24,7 +24,10 @@ Features:
 * Trash file/folder
 
 What's missing:
-* Browser-based login (password login only)
+* Browser-based login (password login only) - if Proton challenges a login with
+  CAPTCHA/human verification, it surfaces as `HumanVerificationRequiredError`
+  and can't be completed by this SDK; sign in via a Proton client in a browser
+  once to clear the challenge, then retry
 * Moving/copying folders (`moveNode`/`copyNode` are files-only)
 * Sharing, non-root volumes, photos, restoring from trash, permanent delete
 * FIDO2/security-key 2FA

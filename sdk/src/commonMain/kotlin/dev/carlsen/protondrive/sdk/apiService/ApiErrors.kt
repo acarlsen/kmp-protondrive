@@ -23,6 +23,16 @@ class InvalidRequirementsAPIError(message: String, code: Int? = null, details: A
     ValidationError(message, code, details)
 
 /**
+ * Thrown when the API demands CAPTCHA / human verification before continuing
+ * (error code 9001). This SDK has no browser-based verification flow (see
+ * the README's "What's missing"), so this can't be resolved
+ * programmatically - the account needs to complete verification via
+ * proton.me in a browser once, or contact Proton support.
+ */
+class HumanVerificationRequiredError(message: String, code: Int, val details: Any? = null) :
+    ServerError(message, code = code)
+
+/**
  * Builds the appropriate [ServerError]/[ValidationError] subtype from an API
  * response, mirroring apiErrorFactory() in internal/apiService/errors.ts.
  */
@@ -52,6 +62,7 @@ fun apiErrorFactory(
 
     return when (code) {
         ErrorCode.NOT_EXISTS -> NotFoundAPIError(message, code, details)
+        ErrorCode.HUMAN_VERIFICATION_REQUIRED -> HumanVerificationRequiredError(message, code, details)
         // ValidationError should be used only when it's clearly a user input error,
         // otherwise it should be a ServerError. Specific cases that aren't clear
         // from the code alone must be handled by each module separately.

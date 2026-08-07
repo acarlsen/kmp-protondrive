@@ -84,6 +84,17 @@ class DriveAPIServiceTest {
     }
 
     @Test
+    fun `a human-verification error code maps to the matching typed error`() = runTest {
+        val httpClient = FakeHttpClient()
+        httpClient.enqueueResponse(FakeJsonResponse(status = 422, body = errorBody(
+            ErrorCode.HUMAN_VERIFICATION_REQUIRED, "For security reasons, please complete CAPTCHA.")))
+        val service = newService(httpClient)
+
+        val error = assertFailsWith<HumanVerificationRequiredError> { service.get<Pong>("core/v4/auth/info") }
+        assertEquals("For security reasons, please complete CAPTCHA.", error.message)
+    }
+
+    @Test
     fun `a transport exception on the first attempt is retried once and can still succeed`() = runTest {
         val httpClient = FakeHttpClient()
         httpClient.enqueueThrow(RuntimeException("boom"))

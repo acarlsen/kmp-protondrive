@@ -1,5 +1,11 @@
 # Change Log
 
+## Unreleased
+
+- API error code 9001 (CAPTCHA / human verification required) now maps to a
+  dedicated `HumanVerificationRequiredError` instead of the generic
+  `APICodeError`, so callers can detect and explain this case specifically
+
 ## 1.0.0-beta03 *(2026-07-26)*
 
 - Fix `createFolder` surfacing a confusing crypto-verification error instead of

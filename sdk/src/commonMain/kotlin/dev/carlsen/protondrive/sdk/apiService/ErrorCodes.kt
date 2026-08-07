@@ -34,6 +34,7 @@ object ErrorCode {
     const val INSUFFICIENT_SHARE_QUOTA = 200601
     const val INSUFFICIENT_SHARE_JOINED_QUOTA = 200602
     const val INSUFFICIENT_BOOKMARKS_QUOTA = 200800
+    const val HUMAN_VERIFICATION_REQUIRED = 9001
 }
 
 fun isCodeOk(code: Int): Boolean = code == ErrorCode.OK || code == ErrorCode.OK_MANY || code == ErrorCode.OK_ASYNC

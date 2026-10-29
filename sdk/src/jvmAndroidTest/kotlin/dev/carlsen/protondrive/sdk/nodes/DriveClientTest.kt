@@ -229,4 +229,66 @@ class DriveClientTest {
         }
         assertEquals("some other genuine failure", error.message)
     }
+
+    @Test
+    fun `uploadFile trashes a stale draft on conflict and retries once`() = runTest {
+        val (address, bootstrapResponse) = buildRootBootstrap()
+        val httpClient = FakeHttpClient()
+        httpClient.enqueueResponse(bootstrapResponse)
+        val client = newClient(httpClient, address)
+        val root = client.getMyFilesRoot()
+
+        // The initial create attempt collides with an orphaned draft from an earlier
+        // interrupted upload - the well-known ALREADY_EXISTS code, with the draft's
+        // LinkID in Details.ConflictLinkID (see the try/catch in uploadFile).
+        httpClient.enqueueResponse(
+            FakeJsonResponse(
+                status = 200,
+                body = buildJsonObject {
+                    put("Code", ErrorCode.ALREADY_EXISTS)
+                    put("Error", "Draft revision already exists for this link")
+                    put("Details", buildJsonObject { put("ConflictLinkID", "draft-1") })
+                },
+            ),
+        )
+        // trashNode(draft-1)
+        httpClient.enqueueResponse(
+            FakeJsonResponse(
+                status = 200,
+                body = Json.encodeToJsonElement(
+                    MultiLinkResponse(
+                        code = ErrorCode.OK,
+                        responses = listOf(LinkOperationResult(linkId = "draft-1", response = LinkOperationStatus(code = ErrorCode.OK))),
+                    ),
+                ),
+            ),
+        )
+        // Retried create succeeds.
+        httpClient.enqueueResponse(
+            FakeJsonResponse(
+                status = 200,
+                body = Json.encodeToJsonElement(
+                    CreateFileResponse(code = ErrorCode.OK, file = CreatedFileDto(id = "file-1", revisionId = "rev-1")),
+                ),
+            ),
+        )
+        // uploadRevisionContent: verification, then (no thumbnails/blocks for an empty source) straight to commit.
+        httpClient.enqueueResponse(
+            FakeJsonResponse(
+                status = 200,
+                body = Json.encodeToJsonElement(VerificationDataResponse(code = ErrorCode.OK, verificationCode = "AAAA")),
+            ),
+        )
+        httpClient.enqueueResponse(
+            FakeJsonResponse(status = 200, body = Json.encodeToJsonElement(CommitRevisionResponse(code = ErrorCode.OK))),
+        )
+
+        val node = client.uploadFile(root, "file.txt", kotlinx.io.Buffer())
+
+        assertEquals("file-1", node.linkId)
+        assertEquals(
+            "drive/v2/volumes/$volumeId/trash_multiple",
+            httpClient.jsonRequests[2].url.substringAfter("https://api.example/"),
+        )
+    }
 }

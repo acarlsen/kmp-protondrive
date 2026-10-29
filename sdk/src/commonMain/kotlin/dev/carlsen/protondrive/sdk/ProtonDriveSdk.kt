@@ -32,7 +32,8 @@ data class ProtonDriveAccount(
  * Single entry point for a host app: owns the HTTP transport, session-refresh plumbing, PGP
  * engine, and auth/address-key bootstrapping that [DriveAPIService]/[ProtonAuth]/
  * [AddressKeyProvider]/[KtorProtonDriveHttpClient] would otherwise need wiring together by hand.
- * Sane defaults cover everything except [appVersion] - a console-logging [telemetry] and the
+ * Sane defaults cover everything except [appVersion] (Proton expects `external-drive-<name>@<semver>`;
+ * unrecognised values are more likely to be blocked at login) - a console-logging [telemetry] and the
  * platform's [defaultOpenPGPCrypto] engine (not host-configurable - swapping PGP engines is a
  * platform concern, not a per-app one) - so a third-party app only needs to override what it
  * actually cares about.
@@ -44,6 +45,8 @@ data class ProtonDriveAccount(
  */
 class ProtonDriveSdk(
     appVersion: String,
+    /** Optional `User-Agent`; unset falls back to the HTTP engine's default string. */
+    userAgent: String? = null,
     baseUrl: String = DEFAULT_BASE_URL,
     language: String = "en",
     private val telemetry: ProtonDriveTelemetry = ConsoleProtonDriveTelemetry(),
@@ -63,7 +66,7 @@ class ProtonDriveSdk(
         telemetry = telemetry,
         sdkEvents = SdkEvents(telemetry),
         httpClient = SessionRefreshingHttpClient(
-            delegate = KtorProtonDriveHttpClient(appVersion = appVersion, sessionProvider = { session }),
+            delegate = KtorProtonDriveHttpClient(appVersion = appVersion, userAgent = userAgent, sessionProvider = { session }),
             getRefreshToken = { refreshToken },
             refresh = { token -> auth.refreshSession(token) },
             onRefreshed = { refreshed -> applyRefreshedSession(refreshed) },

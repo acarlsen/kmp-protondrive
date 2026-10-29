@@ -3,9 +3,11 @@ package dev.carlsen.protondrive.cli
 import dev.carlsen.protondrive.sdk.ProtonDriveAccount
 import dev.carlsen.protondrive.sdk.ProtonDriveSdk
 import dev.carlsen.protondrive.sdk.ProtonDriveSession
+import dev.carlsen.protondrive.sdk.apiService.HumanVerificationRequiredError
 import kotlinx.coroutines.runBlocking
 
 private const val APP_VERSION = "external-drive-kmp@0.1.0-alpha"
+private const val USER_AGENT = "ProtonDriveKmpCli/0.1.0-alpha"
 
 fun main(args: Array<String>) = runBlocking {
     println("Proton Drive Kotlin SDK - MVP CLI (login + list files)")
@@ -17,6 +19,7 @@ fun main(args: Array<String>) = runBlocking {
     // deliberately never touches disk itself.
     val sdk = ProtonDriveSdk(
         appVersion = APP_VERSION,
+        userAgent = USER_AGENT,
         onSessionChanged = { session -> SessionStore.save(session.toStoredSession()) },
     )
 
@@ -64,7 +67,16 @@ fun main(args: Array<String>) = runBlocking {
         require(password.isNotBlank()) { "Password must not be empty - is stdin connected to a terminal?" }
 
         println("Logging in...")
-        val loginResult = sdk.login(username, password)
+        val loginResult = try {
+            sdk.login(username, password)
+        } catch (e: HumanVerificationRequiredError) {
+            System.err.println(
+                "Proton blocked this login and asks for human verification (CAPTCHA), which this CLI can't complete.\n" +
+                    "This is expected for some accounts/networks. Try: logging in once at proton.me from this same\n" +
+                    "network/IP (no VPN), then wait a while and retry.",
+            )
+            kotlin.system.exitProcess(1)
+        }
 
         if (loginResult.twoFactorRequired) {
             // FIDO2/security-key 2FA isn't supported - only TOTP codes and recovery codes.

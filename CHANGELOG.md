@@ -1,6 +1,10 @@
 # Change Log
 
-## Unreleased
+## 1.0.0-beta05*(2026-10-29)*
+
+- Optimizations to avoid CAPTCHA login issue
+
+## 1.0.0-beta04*(2026-08-15)*
 
 - API error code 9001 (CAPTCHA / human verification required) now maps to a
   dedicated `HumanVerificationRequiredError` instead of the generic

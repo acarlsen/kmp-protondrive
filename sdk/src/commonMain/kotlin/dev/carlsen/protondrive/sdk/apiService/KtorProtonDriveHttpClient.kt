@@ -35,6 +35,7 @@ import kotlinx.serialization.json.JsonNull
  */
 class KtorProtonDriveHttpClient(
     private val appVersion: String,
+    private val userAgent: String? = null,
     private val sessionProvider: () -> ProtonSession?,
     private val client: HttpClient = defaultHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
@@ -71,6 +72,7 @@ class KtorProtonDriveHttpClient(
                     if (!name.equals("Content-Type", ignoreCase = true)) header(name, value)
                 }
                 header("x-pm-appversion", appVersion)
+                if (!userAgent.isNullOrBlank()) header("User-Agent", userAgent)
                 sessionProvider()?.let { session ->
                     header("x-pm-uid", session.uid)
                     header("Authorization", "Bearer ${session.accessToken}")

@@ -656,21 +656,35 @@ class DriveClient(
         val contentKeyPacket = Base64.encode(crypto.encryptSessionKey(sessionKey, listOf(nodePublicKey)))
         val contentKeyPacketSignature = crypto.signArmoredDetached(sessionKey.rawBytes, nodeKey)
 
-        val createResponse = apiService.post<CreateFileRequest, CreateFileResponse>(
-            "drive/v2/volumes/${parent.volumeId}/files",
-            CreateFileRequest(
-                parentLinkId = parent.linkId,
-                name = armoredName,
-                hash = hash,
-                mimeType = mediaType,
-                nodeKey = generatedKey.armoredKey,
-                nodePassphrase = encryptedPassphrase.armoredData,
-                nodePassphraseSignature = encryptedPassphrase.armoredSignature,
-                contentKeyPacket = contentKeyPacket,
-                contentKeyPacketSignature = contentKeyPacketSignature,
-                signatureAddress = signingEmail,
-            ),
+        val createRequest = CreateFileRequest(
+            parentLinkId = parent.linkId,
+            name = armoredName,
+            hash = hash,
+            mimeType = mediaType,
+            nodeKey = generatedKey.armoredKey,
+            nodePassphrase = encryptedPassphrase.armoredData,
+            nodePassphraseSignature = encryptedPassphrase.armoredSignature,
+            contentKeyPacket = contentKeyPacket,
+            contentKeyPacketSignature = contentKeyPacketSignature,
+            signatureAddress = signingEmail,
         )
+        val createResponse = try {
+            apiService.post<CreateFileRequest, CreateFileResponse>("drive/v2/volumes/${parent.volumeId}/files", createRequest)
+        } catch (error: NodeWithSameNameExistsValidationError) {
+            // The server also uses ALREADY_EXISTS (with this message) when a *draft* from an
+            // earlier interrupted upload (e.g. the app was killed mid-upload, before the
+            // revision got committed) is still sitting at this name/hash - it never became a
+            // visible file, so listChildren() won't have surfaced it as a same-named sibling
+            // for the caller to offer "upload as revision" against (see uploadHere() in the
+            // CLI). ConflictLinkID identifies exactly that orphaned draft; trashing it frees
+            // the name/hash for a single retry. A real (committed, visible) same-named file
+            // would instead have been caught by the caller's own pre-upload listing check, so
+            // reaching here at all is itself a signal this is stale debris, not a live file.
+            val conflictLinkId = error.existingNodeUid
+                ?: throw error
+            trashNode(parent.volumeId, conflictLinkId)
+            apiService.post<CreateFileRequest, CreateFileResponse>("drive/v2/volumes/${parent.volumeId}/files", createRequest)
+        }
         val linkId = createResponse.file.id
         val revisionId = createResponse.file.revisionId
 

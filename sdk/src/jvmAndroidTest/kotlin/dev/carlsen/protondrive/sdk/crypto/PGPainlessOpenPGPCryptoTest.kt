@@ -50,6 +50,30 @@ class PGPainlessOpenPGPCryptoTest {
     }
 
     @Test
+    fun `encrypted messages use PKESK v3 and SEIPD v1 without AEAD, like Drive's non-AEAD JS client`() {
+        // client/js passes enableAeadWithEncryptionKeys:false everywhere (driveCrypto.ts), so
+        // Proton sees v3 PKESK + v1 SEIPD. If PGPainless ever emitted v6/SEIPD v2, a server
+        // validating "nodeKey was used for encrypting xAttr/nodeHashKey" could reject it.
+        val signer = crypto.generateKey(crypto.generatePassphrase())
+        val nodeKey = crypto.generateKey(crypto.generatePassphrase())
+
+        val armored = crypto.encryptAndSignArmored(
+            "hash-key".toByteArray(),
+            listOf(nodeKey.privateKey.toPublicKeyHandle()),
+            signer.privateKey,
+        )
+
+        val factory = org.bouncycastle.openpgp.bc.BcPGPObjectFactory(
+            org.bouncycastle.bcpg.ArmoredInputStream(armored.byteInputStream()),
+        )
+        val encrypted = factory.nextObject() as org.bouncycastle.openpgp.PGPEncryptedDataList
+        val pkesk = encrypted.encryptedDataObjects.asSequence()
+            .filterIsInstance<org.bouncycastle.openpgp.PGPPublicKeyEncryptedData>().single()
+        assertEquals(3, pkesk.version)
+        assertEquals(nodeKey.privateKey.secretKeys.toList()[1].keyID, pkesk.keyID)
+    }
+
+    @Test
     fun `node name round-trips through encrypt-and-sign then decrypt-and-verify, like a Drive node`() {
         // Mirrors Drive's model: a parent folder key encrypts data for/signed by an
         // address key (client/js/src/integration-tests/nodesCrypto.test.ts sets up

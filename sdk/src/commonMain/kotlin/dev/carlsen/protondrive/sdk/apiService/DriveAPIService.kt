@@ -136,6 +136,9 @@ class DriveAPIService(
 
         val code = (result as? JsonObject)?.get("Code")?.jsonPrimitive?.intOrNull ?: 0
         if (!response.ok || !isCodeOk(code)) {
+            // The numeric API code is what distinguishes server-side validation failures that share
+            // a message (e.g. 200501 + HTTP 422 for key/format checks), so keep it in support logs.
+            logger.warn("$method $fullUrl failed: http=${response.status} code=$code")
             throw apiErrorFactory(status = response.status, statusText = response.statusText, result = result)
         }
         if (isCodeOkAsync(code)) {

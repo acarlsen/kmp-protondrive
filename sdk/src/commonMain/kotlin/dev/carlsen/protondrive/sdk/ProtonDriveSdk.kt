@@ -9,6 +9,7 @@ import dev.carlsen.protondrive.sdk.apiService.SessionRefreshingHttpClient
 import dev.carlsen.protondrive.sdk.auth.LoginResult
 import dev.carlsen.protondrive.sdk.auth.ProtonAuth
 import dev.carlsen.protondrive.sdk.auth.TwoFactorResponse
+import dev.carlsen.protondrive.sdk.crypto.ServerClock
 import dev.carlsen.protondrive.sdk.crypto.defaultOpenPGPCrypto
 import dev.carlsen.protondrive.sdk.nodes.DriveClient
 
@@ -54,7 +55,9 @@ class ProtonDriveSdk(
     /** See [DriveClient]'s parameter of the same name - hosts on slow crypto platforms (Android) may opt out of the per-block upload self-check. */
     private val verifyBlocksBeforeUpload: Boolean = true,
 ) {
-    private val crypto = defaultOpenPGPCrypto()
+    /** Synced from API response headers, so crypto doesn't depend on the device clock being accurate. */
+    private val serverClock = ServerClock()
+    private val crypto = defaultOpenPGPCrypto(serverClock)
 
     private var session: ProtonSession? = null
     private var refreshToken: String? = null
@@ -66,7 +69,12 @@ class ProtonDriveSdk(
         telemetry = telemetry,
         sdkEvents = SdkEvents(telemetry),
         httpClient = SessionRefreshingHttpClient(
-            delegate = KtorProtonDriveHttpClient(appVersion = appVersion, userAgent = userAgent, sessionProvider = { session }),
+            delegate = KtorProtonDriveHttpClient(
+                appVersion = appVersion,
+                userAgent = userAgent,
+                sessionProvider = { session },
+                serverClock = serverClock,
+            ),
             getRefreshToken = { refreshToken },
             refresh = { token -> auth.refreshSession(token) },
             onRefreshed = { refreshed -> applyRefreshedSession(refreshed) },

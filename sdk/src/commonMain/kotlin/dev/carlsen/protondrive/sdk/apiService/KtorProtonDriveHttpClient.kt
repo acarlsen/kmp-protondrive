@@ -1,5 +1,6 @@
 package dev.carlsen.protondrive.sdk.apiService
 
+import dev.carlsen.protondrive.sdk.crypto.ServerClock
 import dev.carlsen.protondrive.sdk.errors.ConnectionError
 import io.ktor.client.HttpClient
 import io.ktor.client.network.sockets.ConnectTimeoutException
@@ -32,6 +33,9 @@ import kotlinx.serialization.json.JsonNull
  * Maps transport failures to the exception types [DriveAPIService]'s retry logic expects:
  * [HttpTimeoutError], [HttpNetworkError], and (for DNS/connect failures, treated as "offline")
  * [dev.carlsen.protondrive.sdk.errors.ConnectionError].
+ *
+ * When [serverClock] is set, every response's `x-pm-date` (or `Date`) header updates it, so the
+ * crypto layer dates keys/signatures by Proton's clock rather than a possibly-skewed device clock.
  */
 class KtorProtonDriveHttpClient(
     private val appVersion: String,
@@ -39,6 +43,7 @@ class KtorProtonDriveHttpClient(
     private val sessionProvider: () -> ProtonSession?,
     private val client: HttpClient = defaultHttpClient(),
     private val json: Json = Json { ignoreUnknownKeys = true },
+    private val serverClock: ServerClock? = null,
 ) : ProtonDriveHttpClient {
 
     override suspend fun fetchJson(request: ProtonDriveHttpJsonRequest): ProtonDriveHttpResponse {
@@ -85,7 +90,9 @@ class KtorProtonDriveHttpClient(
                     onUpload { bytesSentTotal, _ -> onProgress(bytesSentTotal) }
                 }
             }
-            return KtorProtonDriveHttpResponse(response, json)
+            return KtorProtonDriveHttpResponse(response, json).also { wrapped ->
+                serverClock?.updateFromHeaders(wrapped.headers)
+            }
         } catch (e: CancellationException) {
             throw e
         } catch (e: HttpRequestTimeoutException) {

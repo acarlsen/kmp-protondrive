@@ -1,8 +1,9 @@
 # Change Log
 
-## 1.0.0-beta05*(2026-10-29)*
+## 1.0.0-beta05*(2026-11-15)*
 
 - Optimizations to avoid CAPTCHA login issue
+- Fix to clock skewing issue using x-pm-date header
 
 ## 1.0.0-beta04*(2026-08-15)*
 

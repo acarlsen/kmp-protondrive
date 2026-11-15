@@ -23,12 +23,19 @@ import org.bouncycastle.openpgp.operator.jcajce.JcePublicKeyKeyEncryptionMethodG
 import org.pgpainless.PGPainless
 import org.pgpainless.algorithm.DocumentSignatureType
 import org.pgpainless.algorithm.EncryptionPurpose
+import org.pgpainless.algorithm.KeyFlag
 import org.pgpainless.decryption_verification.ConsumerOptions
 import org.pgpainless.decryption_verification.MessageMetadata
 import org.pgpainless.encryption_signing.EncryptionOptions
 import org.pgpainless.encryption_signing.ProducerOptions
 import org.pgpainless.encryption_signing.SigningOptions
+import org.pgpainless.key.generation.KeySpec
+import org.pgpainless.key.generation.type.KeyType
+import org.pgpainless.key.generation.type.eddsa_legacy.EdDSALegacyCurve
+import org.pgpainless.key.generation.type.xdh_legacy.XDHLegacySpec
 import org.pgpainless.key.protection.SecretKeyRingProtector
+import org.pgpainless.signature.subpackets.BaseSignatureSubpackets
+import org.pgpainless.util.Passphrase
 import org.pgpainless.util.SessionKey
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
@@ -45,7 +52,10 @@ private const val PARTIAL_PACKET_BUFFER_SIZE = 1 shl 20
  * BouncyCastle-backed) instead of Proton's native/WASM crypto engine. Used to validate
  * that a pure-Kotlin/JVM port of the Drive SDK is viable without native bindings.
  */
-class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
+class PGPainlessOpenPGPCrypto(
+    /** Source of "now" for key/signature creation and validity checks - see [ServerClock]. */
+    private val serverClock: ServerClock = ServerClock(),
+) : OpenPGPCrypto {
 
     override fun generatePassphrase(): String {
         val bytes = ByteArray(32)
@@ -54,8 +64,16 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
     }
 
     override fun generateKey(passphrase: String): GeneratedKey {
-        val secretKeys: PGPSecretKeyRing = PGPainless.generateKeyRing()
-            .modernKeyRing("Drive key", passphrase)
+        // Same layout as PGPainless' modernKeyRing() template, but dated by the server clock -
+        // a key created "in the future" (device clock ahead) is rejected by the API.
+        val createdAt = now()
+        val secretKeys: PGPSecretKeyRing = PGPainless.buildKeyRing()
+            .setPrimaryKey(KeySpec.getBuilder(KeyType.EDDSA_LEGACY(EdDSALegacyCurve._Ed25519), KeyFlag.CERTIFY_OTHER).setKeyCreationDate(createdAt))
+            .addSubkey(KeySpec.getBuilder(KeyType.XDH_LEGACY(XDHLegacySpec._X25519), KeyFlag.ENCRYPT_COMMS, KeyFlag.ENCRYPT_STORAGE).setKeyCreationDate(createdAt))
+            .addSubkey(KeySpec.getBuilder(KeyType.EDDSA_LEGACY(EdDSALegacyCurve._Ed25519), KeyFlag.SIGN_DATA).setKeyCreationDate(createdAt))
+            .addUserId("Drive key")
+            .setPassphrase(Passphrase.fromPassword(passphrase))
+            .build()
         val armoredKey = PGPainless.asciiArmor(secretKeys)
         return GeneratedKey(PrivateKeyHandle(secretKeys, passphrase), armoredKey)
     }
@@ -73,11 +91,10 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
         signingKey: PrivateKeyHandle,
     ): ByteArray {
         val out = ByteArrayOutputStream()
-        val encryptionOptions = EncryptionOptions.encryptCommunications()
+        val encryptionOptions = encryptionOptions()
         encryptionKeys.forEach { encryptionOptions.addRecipient(it.freshPublicKeys()) }
 
-        val signingOptions = SigningOptions.get()
-            .addInlineSignature(unprotectedProtector, signingKey.freshUnlockedKeys(), DocumentSignatureType.BINARY_DOCUMENT)
+        val signingOptions = signingOptions(signingKey, detached = false)
 
         PGPainless.encryptAndOrSign()
             .onOutputStream(out)
@@ -92,7 +109,7 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
         decryptionKey: PrivateKeyHandle,
         verificationKeys: List<PublicKeyHandle>,
     ): DecryptResult {
-        val options = ConsumerOptions.get()
+        val options = consumerOptions()
             .addDecryptionKey(decryptionKey.freshUnlockedKeys(), unprotectedProtector)
         verificationKeys.forEach { options.addVerificationCert(it.freshPublicKeys()) }
 
@@ -113,8 +130,7 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
 
     override fun signDetached(data: ByteArray, signingKey: PrivateKeyHandle): ByteArray {
         val out = ByteArrayOutputStream()
-        val signingOptions = SigningOptions.get()
-            .addDetachedSignature(unprotectedProtector, signingKey.freshUnlockedKeys(), DocumentSignatureType.BINARY_DOCUMENT)
+        val signingOptions = signingOptions(signingKey, detached = true)
 
         val stream = PGPainless.encryptAndOrSign()
             .onOutputStream(out)
@@ -136,7 +152,7 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
         // leading bytes and, if they happen to resemble an OpenPGP packet header
         // (~6% of random 32-byte session keys do), tries to parse them as a message
         // and throws MalformedOpenPgpMessageException instead of verifying.
-        val options = ConsumerOptions.get()
+        val options = consumerOptions()
             .forceNonOpenPgpData()
             .addVerificationOfDetachedSignatures(ByteArrayInputStream(signature))
         verificationKeys.forEach { options.addVerificationCert(it.freshPublicKeys()) }
@@ -153,7 +169,7 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
     }
 
     override fun decryptArmoredSessionKey(armoredData: String, decryptionKeys: List<PrivateKeyHandle>): SessionKeyHandle {
-        val options = ConsumerOptions.get()
+        val options = consumerOptions()
         decryptionKeys.forEach { options.addDecryptionKey(it.freshUnlockedKeys(), unprotectedProtector) }
 
         val stream = PGPainless.decryptAndOrVerify()
@@ -171,7 +187,7 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
         sessionKey: SessionKeyHandle,
         verificationKeys: List<PublicKeyHandle>,
     ): DecryptResult {
-        val options = ConsumerOptions.get().setSessionKey(sessionKey.sessionKey)
+        val options = consumerOptions().setSessionKey(sessionKey.sessionKey)
         if (armoredSignature != null) {
             options.addVerificationOfDetachedSignatures(armoredSignature.byteInputStream(Charsets.UTF_8))
         }
@@ -193,7 +209,7 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
         decryptionKeys: List<PrivateKeyHandle>,
         verificationKeys: List<PublicKeyHandle>,
     ): DecryptResult {
-        val options = ConsumerOptions.get()
+        val options = consumerOptions()
         decryptionKeys.forEach { options.addDecryptionKey(it.freshUnlockedKeys(), unprotectedProtector) }
         verificationKeys.forEach { options.addVerificationCert(it.freshPublicKeys()) }
 
@@ -214,7 +230,7 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
         decryptionKeys: List<PrivateKeyHandle>,
         verificationKeys: List<PublicKeyHandle>,
     ): DecryptResult {
-        val options = ConsumerOptions.get()
+        val options = consumerOptions()
             .addVerificationOfDetachedSignatures(armoredSignature.byteInputStream(Charsets.UTF_8))
         decryptionKeys.forEach { options.addDecryptionKey(it.freshUnlockedKeys(), unprotectedProtector) }
         verificationKeys.forEach { options.addVerificationCert(it.freshPublicKeys()) }
@@ -236,11 +252,10 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
         signingKey: PrivateKeyHandle,
     ): String {
         val out = ByteArrayOutputStream()
-        val encryptionOptions = EncryptionOptions.encryptCommunications()
+        val encryptionOptions = encryptionOptions()
         encryptionKeys.forEach { encryptionOptions.addRecipient(it.freshPublicKeys()) }
 
-        val signingOptions = SigningOptions.get()
-            .addInlineSignature(unprotectedProtector, signingKey.freshUnlockedKeys(), DocumentSignatureType.BINARY_DOCUMENT)
+        val signingOptions = signingOptions(signingKey, detached = false)
 
         PGPainless.encryptAndOrSign()
             .onOutputStream(out)
@@ -256,11 +271,10 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
         signingKey: PrivateKeyHandle,
     ): EncryptedDetachedResult {
         val out = ByteArrayOutputStream()
-        val encryptionOptions = EncryptionOptions.encryptCommunications()
+        val encryptionOptions = encryptionOptions()
         encryptionKeys.forEach { encryptionOptions.addRecipient(it.freshPublicKeys()) }
 
-        val signingOptions = SigningOptions.get()
-            .addDetachedSignature(unprotectedProtector, signingKey.freshUnlockedKeys(), DocumentSignatureType.BINARY_DOCUMENT)
+        val signingOptions = signingOptions(signingKey, detached = true)
 
         val stream = PGPainless.encryptAndOrSign()
             .onOutputStream(out)
@@ -352,7 +366,7 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
             return decryptSeipdV2WithSessionKey(data, sessionKey, verificationKeys)
         }
 
-        val options = ConsumerOptions.get().setSessionKey(sessionKey.sessionKey)
+        val options = consumerOptions().setSessionKey(sessionKey.sessionKey)
         verificationKeys.forEach { options.addVerificationCert(it.freshPublicKeys()) }
 
         val stream = PGPainless.decryptAndOrVerify()
@@ -418,7 +432,7 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
     ): VerifyResult {
         // forceNonOpenPgpData: same misclassification hazard as verifyDetached - session
         // keys and manifests are arbitrary binary that can look like a packet header.
-        val options = ConsumerOptions.get()
+        val options = consumerOptions()
             .forceNonOpenPgpData()
             .addVerificationOfDetachedSignatures(armoredSignature.byteInputStream(Charsets.UTF_8))
         verificationKeys.forEach { options.addVerificationCert(it.freshPublicKeys()) }
@@ -434,8 +448,7 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
 
     override fun signArmoredDetached(data: ByteArray, signingKey: PrivateKeyHandle): String {
         val out = ByteArrayOutputStream()
-        val signingOptions = SigningOptions.get()
-            .addDetachedSignature(unprotectedProtector, signingKey.freshUnlockedKeys(), DocumentSignatureType.BINARY_DOCUMENT)
+        val signingOptions = signingOptions(signingKey, detached = true)
 
         val stream = PGPainless.encryptAndOrSign()
             .onOutputStream(out)
@@ -539,6 +552,42 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
         }
     }
 
+    private fun now(): Date = Date(serverClock.now().toEpochMilliseconds())
+
+    /**
+     * Signatures are dated by the server clock (PGPainless otherwise stamps `new Date()`), and the
+     * signing key's validity is evaluated at that same instant so a key created at server time
+     * isn't considered "not yet valid" on a device whose clock is behind.
+     */
+    private fun signingOptions(signingKey: PrivateKeyHandle, detached: Boolean): SigningOptions {
+        val createdAt = now()
+        val setCreationTime = object : BaseSignatureSubpackets.Callback {
+            override fun modifyHashedSubpackets(hashedSubpackets: BaseSignatureSubpackets) {
+                hashedSubpackets.setSignatureCreationTime(createdAt)
+            }
+        }
+        val options = SigningOptions.get().setEvaluationDate(createdAt)
+        val keys = signingKey.freshUnlockedKeys()
+        return if (detached) {
+            options.addDetachedSignature(unprotectedProtector, keys, null, DocumentSignatureType.BINARY_DOCUMENT, setCreationTime)
+        } else {
+            options.addInlineSignature(unprotectedProtector, keys, null, DocumentSignatureType.BINARY_DOCUMENT, setCreationTime)
+        }
+    }
+
+    /** Recipient keys are evaluated at server time - set before any addRecipient(), which evaluates eagerly. */
+    private fun encryptionOptions(): EncryptionOptions =
+        EncryptionOptions.encryptCommunications().setEvaluationDate(now())
+
+    /**
+     * PGPainless rejects signatures created after `verifyNotAfter`, which defaults to the device
+     * clock - so a device running behind would fail fresh signatures from other clients. Use the
+     * server clock instead, plus [FUTURE_SIGNATURE_TOLERANCE_MS] to absorb the HTTP date header's
+     * whole-second resolution.
+     */
+    private fun consumerOptions(): ConsumerOptions =
+        ConsumerOptions.get().verifyNotAfter(Date(now().time + FUTURE_SIGNATURE_TOLERANCE_MS))
+
     private fun verificationStatus(
         metadata: MessageMetadata,
         hasVerificationKeys: Boolean,
@@ -549,6 +598,8 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
     }
 
     private companion object {
+        const val FUTURE_SIGNATURE_TOLERANCE_MS = 60_000L
+
         /**
          * All PGPainless calls pass [PrivateKeyHandle.freshUnlockedKeys] (protection already
          * stripped, exactly once per handle), so no passphrase-based protector - and no
@@ -558,4 +609,4 @@ class PGPainlessOpenPGPCrypto : OpenPGPCrypto {
     }
 }
 
-actual fun defaultOpenPGPCrypto(): OpenPGPCrypto = PGPainlessOpenPGPCrypto()
+actual fun defaultOpenPGPCrypto(serverClock: ServerClock): OpenPGPCrypto = PGPainlessOpenPGPCrypto(serverClock)

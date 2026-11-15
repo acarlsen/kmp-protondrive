@@ -1,7 +1,7 @@
 # [kmp-protondrive](https://github.com/acarlsen/kmp-protondrive)
 ![GitHub Workflow Status (with event)](https://img.shields.io/github/actions/workflow/status/acarlsen/kmp-mega/build.yml)
 [![Maven Central](https://img.shields.io/maven-central/v/dev.carlsen.protondrive/protondrive)](https://central.sonatype.com/namespace/dev.carlsen.protondrive)
-[![Kotlin version](https://img.shields.io/badge/Kotlin-2.4.0-blueviolet?logo=kotlin&logoColor=white)](http://kotlinlang.org)
+[![Kotlin version](https://img.shields.io/badge/Kotlin-2.4.21-blueviolet?logo=kotlin&logoColor=white)](http://kotlinlang.org)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 ![badge][badge-jvm]
 ![badge][badge-android]
@@ -49,7 +49,7 @@ repositories {
 Put in your dependencies block:
 
 ```kotlin
-implementation("dev.carlsen.protondrive:protondrive:1.0.0-beta01")
+implementation("dev.carlsen.protondrive:protondrive:1.0.0-beta05")
 ```
 
 ## How to use

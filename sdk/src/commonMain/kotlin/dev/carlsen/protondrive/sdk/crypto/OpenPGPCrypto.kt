@@ -1,7 +1,10 @@
 package dev.carlsen.protondrive.sdk.crypto
 
-/** The platform's default [OpenPGPCrypto] engine - used by [dev.carlsen.protondrive.sdk.ProtonDriveSdk] unless a host supplies its own. */
-expect fun defaultOpenPGPCrypto(): OpenPGPCrypto
+/**
+ * The platform's default [OpenPGPCrypto] engine - used by [dev.carlsen.protondrive.sdk.ProtonDriveSdk] unless a host supplies its own.
+ * [serverClock] dates keys/signatures; share it with the HTTP client that keeps it in sync.
+ */
+expect fun defaultOpenPGPCrypto(serverClock: ServerClock = ServerClock()): OpenPGPCrypto
 
 /**
  * Subset of Proton Drive's OpenPGPCrypto contract (see client/js/src/crypto/interface.ts
